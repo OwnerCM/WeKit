@@ -113,7 +113,7 @@ dexlib2 = { module = "org.smali:dexlib2", version = "2.5.2" }
 google-guava = { module = "com.google.guava:guava", version = "33.5.0-android" }
 google-protobuf-protoc = { module = "com.google.protobuf:protoc", version.ref = "protobuf" }
 google-protobuf-java = { module = "com.google.protobuf:protobuf-java", version.ref = "protobuf" }
-byte-buddy = { module = "net.bytebuddy:byte-buddy", version = "1.18.4" }
+byte-buddy = { module = "net.bytebuddy:byte-buddy", version = "1.15.10" }
 
 dalvik-dx = { module = "com.jakewharton.android.repackaged:dalvik-dx", version = "16.0.1" }
 okhttp3-okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttpVersion" }

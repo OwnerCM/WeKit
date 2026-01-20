@@ -120,7 +120,7 @@
 # ==========================================================
 # Side Effects & Optimizations
 # ==========================================================
-# 移除 Kotlin Intrinsics 检查（减少包体积，稍微提升性能）
+# 移除 Kotlin Intrinsics 检查
 -assumenosideeffects class kotlin.jvm.internal.Intrinsics {
     public static void check*(...);
     public static void throw*(...);
@@ -131,6 +131,21 @@
     public static ** requireNonNull(...);
 }
 
+# 忽略 ByteBuddy 和 Mocking 相关的类
+-dontwarn net.bytebuddy.**
+-dontwarn java.lang.instrument.**
+-dontwarn org.mockito.**
+
+# 忽略 FindBugs/SpotBugs 注解
+-dontwarn edu.umd.cs.findbugs.**
+-dontwarn javax.annotation.**
+
+# 忽略 KotlinPoet 和 Java Model 类
+-dontwarn com.squareup.kotlinpoet.**
+-dontwarn javax.lang.model.**
+
+# 忽略 ServiceProvider 相关的 OSGi 注解
+-dontwarn aQute.bnd.annotation.spi.**
 
 # ==========================================================
 # Build Behavior
