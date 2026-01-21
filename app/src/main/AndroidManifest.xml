@@ -13,6 +13,7 @@
         android:supportsRtl="true"
         android:description="@string/xposed_description"
         android:theme="@style/Theme.WeKit">
+
         <activity
             android:name=".activity.MainActivity"
             android:exported="true"
