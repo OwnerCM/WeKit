@@ -11,7 +11,6 @@ WeChat, Now with Superpowers
 
 -------
 
-
 # Reference / 参考项目
 
 <table>
@@ -37,3 +36,7 @@ This project is updated irregularly and maintenance may cease at any time withou
 本项目采用社区驱动模式。我只维护框架本身，所有功能性更新依赖社区贡献。如果你需要某个功能，请提交代码。
 
 This project is community-driven. I only maintain the framework itself; all functional updates depend on community contributions. If you need a feature, please submit the code.
+
+目前框架还在更新，请**不要提交代码**
+
+The framework is currently under active development; **please do not submit any code for the time being**.
