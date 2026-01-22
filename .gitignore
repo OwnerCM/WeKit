@@ -31,3 +31,4 @@ local.properties
 /app/.cxx/
 /app/debug/
 /.kotlin
+/nul
