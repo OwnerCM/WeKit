@@ -1,6 +1,7 @@
 # ==========================================================
-# Global Attributes & Basics (通用设置)
+# Global Attributes & Basics
 # ==========================================================
+
 # 保留泛型、注解、行号
 -keepattributes Signature,RuntimeVisibleAnnotations,AnnotationDefault,LineNumberTable,SourceFile,*Annotation*
 
@@ -21,22 +22,11 @@
 }
 
 # ==========================================================
-# App Specific
+# 请将 wekit\app\src\main\java 下的包放在这里，避免被优化
+# 如果你创建了自己的包，也请放在这里，谢谢！
 # ==========================================================
+
 -keep class moe.ouom.wekit.** { *; }
-# 强制保留 Kotlin 标准库
-
-# 无论主 DEX 用没用，都留着给 Hidden DEX 用
--keep class kotlin.** { *; }
--keep class kotlinx.** { *; }
--keep class org.intellij.lang.annotations.** { *; }
--keep class org.jetbrains.annotations.** { *; }
-
--keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
--keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
--keepclassmembers class kotlinx.coroutines.CoroutineExceptionHandler {
-    <init>(...);
-}
 
 # ==========================================================
 # Xposed & LSPosed
@@ -54,100 +44,83 @@
     @io.github.libxposed.api.annotations.AfterInvocation <methods>;
 }
 
-# 忽略相关警告
--dontwarn de.robv.android.xposed.**
--dontwarn io.github.libxposed.api.**
-# 忽略被抽离隐藏的 hooks 包，它们会在运行时通过内存加载
--dontwarn moe.ouom.wekit.hooks.**
+# ==========================================================
+# Kotlin 标准库优化
+# ==========================================================
+# 保留 Hidden Dex 可能用到的基本反射和 Intrinsic 检查
+-keep class kotlin.jvm.internal.Intrinsics { *; }
+-keep class kotlin.Metadata { *; }
 
-# ==========================================================
-# Jetpack Compose
-# ==========================================================
+# 保留 Kotlin 标准库核心类（Hidden Dex 依赖）
+-keep class kotlin.** { *; }
+-keep class kotlinx.** { *; }
+-keep class org.intellij.lang.annotations.** { *; }
+-keep class org.jetbrains.annotations.** { *; }
+
+# 协程
+-keep class kotlinx.coroutines.** { *; }
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+-keepclassmembers class kotlinx.coroutines.CoroutineExceptionHandler {
+    <init>(...);
+}
+
+# 必须保留 Kotlin 属性委托相关的接口
+-keep @interface kotlin.jvm.JvmField
+-keep @interface kotlin.jvm.JvmStatic
+-keep @interface kotlin.jvm.JvmName
+
+-keep class kotlin.properties.PropertyDelegateProvider { *; }
+-keep class kotlin.properties.ReadWriteProperty { *; }
+-keep class kotlin.properties.ReadOnlyProperty { *; }
+
+# 保留 Kotlin 内部生成的委托字段
 -keepclassmembers class * {
-    @androidx.compose.runtime.Composable <methods>;
+    kotlin.properties.PropertyDelegateProvider *;
+    kotlin.reflect.KProperty *;
+    kotlin.properties.ReadWriteProperty *;
+    kotlin.properties.ReadOnlyProperty *;
 }
 
-# 保持 R 文件字段（有时在混淆资源ID时需要）
--keepclassmembers class **.R$* {
-    public static <fields>;
+-keep interface kotlin.** { *; }
+
+# ==========================================================
+# 第三方库优化
+# ==========================================================
+# OkHttp/Retrofit
+-keepattributes Signature,InnerClasses,EnclosingMethod
+-keepclassmembers class * {
+    @com.google.gson.annotations.SerializedName <fields>;
 }
+
+# Protocol Buffers
+-keep class com.google.protobuf.GeneratedMessageLite { *; }
 
 # ==========================================================
 # Material Design & AndroidX
 # ==========================================================
 -keep class com.google.android.material.internal.** { *; }
 -keep public class com.google.android.material.internal.CheckableImageButton { *; }
--dontwarn com.google.android.material.**
--dontwarn androidx.**
 
 # ==========================================================
-# Serialization (Gson & Kotlinx)
+# DexKit
 # ==========================================================
-# Gson
--keep class com.google.gson.reflect.TypeToken { *; }
--keep class com.google.gson.Gson { *; }
--keepclassmembers,allowobfuscation class * {
-  @com.google.gson.annotations.SerializedName <fields>;
+# 保留 DexKit 核心类和方法
+-keep class org.luckypray.dexkit.** { *; }
+-keepclassmembers class org.luckypray.dexkit.** { *; }
+
+# 保留 DexKit 的 JNI 方法
+-keepclasseswithmembernames class org.luckypray.dexkit.** {
+    native <methods>;
 }
 
-# Kotlinx Serialization
--keep class kotlinx.serialization.** { *; }
--keepclassmembers class ** {
-    @kotlinx.serialization.Serializable <methods>;
-}
--if @kotlinx.serialization.Serializable class **
--keepclassmembers class <1> {
-    static <1>$Companion Companion;
-}
--if @kotlinx.serialization.Serializable class ** {
-    static **$* *;
-}
--keepclassmembers class <2>$<3> {
-    kotlinx.serialization.KSerializer serializer(...);
-}
--if @kotlinx.serialization.Serializable class ** {
-    public static ** INSTANCE;
-}
--keepclassmembers class <1> {
-    public static <1> INSTANCE;
-    kotlinx.serialization.KSerializer serializer(...);
-}
+# 保留 DexKit 使用的反射相关类
+-keep class * implements org.luckypray.dexkit.** { *; }
 
-# Protobuf
--keep class com.google.protobuf.** { *; }
--dontwarn com.google.protobuf.**
 
 # ==========================================================
-# Network
+# 忽略警告
 # ==========================================================
--keepattributes *Annotation*
--keep interface okhttp3.** { *; }
--dontwarn okhttp3.**
--dontwarn okio.**
-
-# ==========================================================
-# Third Party Libs
-# ==========================================================
--keep class com.android.dx.** { *; }
--keep class net.bytebuddy.** { *; }
--dontwarn com.sun.jna.**
-
-# ==========================================================
-# Side Effects & Optimizations
-# ==========================================================
-
--keep class kotlin.jvm.internal.Intrinsics {
-    public static void checkNotNull(java.lang.Object, java.lang.String);
-    public static void checkExpressionValueIsNotNull(java.lang.Object, java.lang.String);
-    public static void checkNotNullParameter(java.lang.Object, java.lang.String);
-    *;
-}
-
-# 移除 Objects.requireNonNull
--assumenosideeffects class java.util.Objects {
-    public static ** requireNonNull(...);
-}
-
 # 忽略 ByteBuddy 和 Mocking 相关的类
 -dontwarn net.bytebuddy.**
 -dontwarn java.lang.instrument.**
@@ -175,32 +148,27 @@
 # 修复 Stax2 XML 相关的警告 #
 -dontwarn org.codehaus.stax2.**
 
-# ==========================================================
-# DexKit
-# ==========================================================
-# 保留 DexKit 核心类和方法
--keep class org.luckypray.dexkit.** { *; }
--keepclassmembers class org.luckypray.dexkit.** { *; }
-
-# 保留 DexKit 的 JNI 方法
--keepclasseswithmembernames class org.luckypray.dexkit.** {
-    native <methods>;
-}
-
-# 保留 DexKit 使用的反射相关类
--keep class * implements org.luckypray.dexkit.** { *; }
-
 # 忽略 DexKit 警告
 -dontwarn org.luckypray.dexkit.**
 
-# ==========================================================
+# 忽略被抽离隐藏的 hooks 包，它们会在运行时通过内存加载
+-dontwarn moe.ouom.wekit.hooks.**
+
 # Material Dialogs
-# ==========================================================
 -keep class com.afollestad.materialdialogs.** { *; }
 -dontwarn com.afollestad.materialdialogs.**
+
+# OTHER #
+-dontwarn com.sun.jna.**
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn com.google.protobuf.**
+-dontwarn com.google.android.material.**
+-dontwarn androidx.**
 
 # ==========================================================
 # Build Behavior
 # ==========================================================
 -dontoptimize
+-renamesourcefileattribute SourceFile
 -dontobfuscate

@@ -870,8 +870,8 @@ dependencies {
     compileOnly(libs.lombok)
     annotationProcessor(libs.lombok)
 
-    implementation(libs.jackson.databind)
-    implementation(libs.jackson.core)
-    implementation(libs.stax.api)
-    implementation(libs.woodstox.core)
+//    implementation(libs.jackson.databind)
+//    implementation(libs.jackson.core)
+//    implementation(libs.stax.api)
+//    implementation(libs.woodstox.core)
 }
