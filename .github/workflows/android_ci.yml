@@ -1,4 +1,4 @@
-name: NeriPlayer Android CI
+name: WeKit Android CI
 
 on:
   push:
