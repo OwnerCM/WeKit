@@ -1,4 +1,4 @@
-name: Bug report / 报告问题
+name: 报告问题 / Bug report
 description: 提交一份问题报告帮助开发者改进模块 / Submit a bug report to help developers improve the module
 title: "[BUG]"
 labels: [ "Bug" ]
