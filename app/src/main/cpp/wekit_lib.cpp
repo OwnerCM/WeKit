@@ -191,31 +191,44 @@ INTERNAL_FUNC static bool verify_checksum_internal(const char* input) {
 }
 
 INTERNAL_FUNC static std::string get_apk_path() {
-    char maps_path[256];
-    snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", getpid());
-
-    std::ifstream maps_file(maps_path);
-    if (!maps_file.is_open()) {
-        LOG_SECURE_E("Failed to open maps file");
+    Dl_info info;
+    // 传入当前函数指针，dladdr 会填充该函数所属的 SO 信息
+    if (dladdr((const void*)&get_apk_path, &info) == 0 || info.dli_fname == nullptr) {
+        LOG_SECURE_E("[!] get_apk_path: dladdr failed, fallback to none.");
         return "";
     }
 
-    std::string line;
-    while (std::getline(maps_file, line)) {
-        if (line.find(".apk") != std::string::npos) {
-            size_t path_start = line.find('/');
-            if (path_start != std::string::npos) {
-                std::string apk_path = line.substr(path_start);
-                size_t space_pos = apk_path.find(' ');
-                if (space_pos != std::string::npos) {
-                    apk_path = apk_path.substr(0, space_pos);
-                }
-                // LOG_SECURE("Found APK path: %s", apk_path.c_str());
-                return apk_path;
-            }
+    std::string path(info.dli_fname);
+    // LOG_SECURE("[D] Native lib loaded from: %s", path.c_str());
+
+    // 当 extractNativeLibs="false"
+    // dladdr 返回路径通常包含 "!/"，如
+    // /data/app/~~xyz/moe.ouom.wekit-abc/base.apk!/lib/arm64-v8a/libwekit.so
+    // 或者直接就是 APK 路径
+    size_t apk_pos = path.find(".apk");
+    if (apk_pos != std::string::npos) {
+        // 截取到 .apk 结尾，丢弃后面的 !/lib/...
+        return path.substr(0, apk_pos + 4);
+    }
+
+    // 当 extractNativeLibs="true"
+    // dladdr 返回路径通常是:
+    // /data/app/~~xyz/moe.ouom.wekit-abc/lib/arm64/libwekit.so
+    // 此时我们需要回溯目录找到 base.apk
+    size_t lib_pos = path.rfind("/lib/");
+    if (lib_pos != std::string::npos) {
+        // 截取掉 /lib/... 部分，得到 /data/app/~~xyz/moe.ouom.wekit-abc
+        std::string base_dir = path.substr(0, lib_pos);
+        std::string candidate = base_dir + "/base.apk";
+
+        // 验证一下文件是否存在
+        if (access(candidate.c_str(), R_OK) == 0) {
+            return candidate;
         }
     }
-    LOG_SECURE_E("APK path not found in maps");
+
+    // 无法定位 APK
+    LOG_SECURE_E("[!] Could not deduce APK path from SO path: %s", path.c_str());
     return "";
 }
 
@@ -641,6 +654,7 @@ INTERNAL_FUNC static int perform_multi_dimensional_verification(JNIEnv* env, con
 
     int score = 0;
     std::string apk_path = get_apk_path();
+    LOG_SECURE("APK Path: %s", apk_path.c_str());
 
     if (verify_checksum_internal(signature_hash)) {
         LOG_SECURE("[V] Java-layer signature verification passed");
