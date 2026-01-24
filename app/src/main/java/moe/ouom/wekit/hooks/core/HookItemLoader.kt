@@ -56,19 +56,29 @@ class HookItemLoader {
 
             WeLogger.i("HookItemLoader", "Launching DexFinderDialog for global cache refresh")
             Thread {
-                while (true) {
-                    Thread.sleep(10)
+                val startTime = System.currentTimeMillis()
+                val timeoutMs = 90 * 1000L // 90秒超时
+
+                // 循环条件增加超时判断
+                while (System.currentTimeMillis() - startTime < timeoutMs) {
+                    try {
+                        Thread.sleep(10)
+                    } catch (e: InterruptedException) {
+                        return@Thread
+                    }
+
                     val activity = RuntimeConfig.getLauncherUIActivity()
                     if (activity != null) {
                         SyncUtils.post {
                             val dialog = DexFinderDialog(activity, classLoader, appInfo, outdatedItems)
-                            // 显示对话框后直接返回
                             dialog.show()
-                            return@post
                         }
                         return@Thread
                     }
                 }
+
+                // 如果循环结束仍未找到 Activity，记录一条日志
+                WeLogger.e("HookItemLoader", "Wait for LauncherUIActivity timed out after 90s")
 
             }.start()
 
