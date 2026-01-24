@@ -115,7 +115,7 @@ public class WeLauncher {
                     RuntimeConfig.setLogin_user_name(login_user_name);
                     RuntimeConfig.setLast_login_uin(last_login_uin);
 
-                    WeLogger.d("WeLauncher", "User Info Loaded: " + last_login_nick_name + " (" + login_weixin_username + ")");
+//                    WeLogger.d("WeLauncher", "User Info Loaded: " + last_login_nick_name + " (" + login_weixin_username + ")");
                 }
             });
 
