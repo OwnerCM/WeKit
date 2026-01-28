@@ -9,7 +9,6 @@ import moe.ouom.wekit.core.dsl.dexMethod
 import moe.ouom.wekit.core.model.ApiHookItem
 import moe.ouom.wekit.dexkit.intf.IDexFind
 import moe.ouom.wekit.hooks.core.annotation.HookItem
-import moe.ouom.wekit.util.Initiator.loadClass
 import moe.ouom.wekit.util.common.SyncUtils
 import moe.ouom.wekit.util.log.WeLogger
 import org.luckypray.dexkit.DexKitBridge
@@ -19,6 +18,7 @@ import java.lang.reflect.Modifier
 
 /**
  * 微信消息发送 API
+ * 基于: WeChat 8.0.68
  * 适配版本：WeChat <待补充> ~ 8.0.68
  */
 @SuppressLint("DiscouragedApi")
@@ -35,15 +35,21 @@ class WeMessageApi : ApiHookItem(), IDexFind {
     private val dexMethodShareFile by dexMethod()
 
     // 图片发送核心类
+    private val dexClassMvvmBase by dexClass()
     private val dexClassImageSender by dexClass()      // 发送逻辑核心
     private val dexClassImageTask by dexClass()        // 任务数据模型
     private val dexMethodImageSendEntry by dexMethod() // 静态入口方法
+    private val dexClassServiceManager by dexClass() // x15.n0
+    private val dexClassConfigLogic by dexClass()    // xv0.z1
+    private val dexClassImageServiceImpl by dexClass()
 
     // 运行时缓存
     private var netSceneSendMsgClass: Class<*>? = null
     private var getSendMsgObjectMethod: Method? = null
     private var postToQueueMethod: Method? = null
     private var shareFileMethod: Method? = null
+    private var getServiceMethod: Method? = null
+    private var getSelfWxidMethod: Method? = null
 
     // 保存宿主 ClassLoader
     private var appClassLoader: ClassLoader? = null
@@ -51,6 +57,8 @@ class WeMessageApi : ApiHookItem(), IDexFind {
     // 图片发送运行时对象
     private var p6Method: Method? = null
     private var imageMetadataMapField: Field? = null
+    private var imageServiceApiClass: Class<*>? = null
+    private var sendImageMethod: Method? = null
 
     // 文件发送运行时对象
     private var wxFileObjectClass: Class<*>? = null
@@ -83,7 +91,7 @@ class WeMessageApi : ApiHookItem(), IDexFind {
                 matcher {
                     methods {
                         add {
-                            paramCount = 4;
+                            paramCount = 4
                             usingStrings("MicroMsg.Mvvm.NetSceneObserverOwner")
                         }
                     }
@@ -93,7 +101,7 @@ class WeMessageApi : ApiHookItem(), IDexFind {
                 matcher {
                     methods {
                         add {
-                            paramCount = 1;
+                            paramCount = 1
                             usingStrings("MicroMsg.NetSceneSendMsg", "markMsgFailed for id:%d")
                         }
                     }
@@ -104,7 +112,7 @@ class WeMessageApi : ApiHookItem(), IDexFind {
                 matcher {
                     methods {
                         add {
-                            paramCount = 2;
+                            paramCount = 2
                             usingStrings("worker thread has not been se", "MicroMsg.NetSceneQueue")
                         }
                     }
@@ -114,7 +122,7 @@ class WeMessageApi : ApiHookItem(), IDexFind {
                 matcher {
                     methods {
                         add {
-                            paramCount = 3;
+                            paramCount = 3
                             usingStrings("scene security verification not passed, type=")
                         }
                     }
@@ -122,7 +130,7 @@ class WeMessageApi : ApiHookItem(), IDexFind {
             }
             dexMethodGetSendMsgObject.find(dexKit, true, descriptors = descriptors) {
                 matcher {
-                    paramCount = 0;
+                    paramCount = 0
                     returnType = dexClassNetSceneObserverOwner.getDescriptorString() ?: ""
                 }
             }
@@ -182,6 +190,39 @@ class WeMessageApi : ApiHookItem(), IDexFind {
                 } else {
                     WeLogger.e(TAG, "查找失败: 未在 ImageSender 中找到静态入口 p6")
                 }
+
+                // 先定位 Mvvm 基类 (ki0.o)
+                // 特征：包含日志字符串 "MicroMsg.Mvvm.MvvmPlugin"
+                dexClassMvvmBase.find(dexKit, descriptors) {
+                    matcher { usingStrings("MicroMsg.Mvvm.MvvmPlugin", "onAccountInitialized start") }
+                }
+
+                // 获取探测到的基类描述符，如 "Lki0/o;"
+                val mvvmBaseDesc = descriptors[dexClassMvvmBase.key]
+
+                // 定位图片服务实现类 (o40.q)
+                // 逻辑：必须包含特定日志，且必须继承自刚才找到的基类
+                if (mvvmBaseDesc != null) {
+                    dexClassImageServiceImpl.find(dexKit, descriptors) {
+                        matcher {
+                            usingStrings("MicroMsg.ImgUpload.MsgImgFeatureService")
+                            superClass(mvvmBaseDesc) // 动态引用，不再硬编码
+                        }
+                    }
+                }
+
+                // 定位其他辅助类
+                dexClassServiceManager.find(dexKit, descriptors) {
+                    matcher { usingStrings("MicroMsg.ServiceManager", "calling getService(...)") }
+                }
+
+                dexClassConfigLogic.find(dexKit, descriptors) {
+                    matcher { usingStrings("MicroMsg.ConfigStorageLogic", "get userinfo fail") }
+                }
+
+                dexClassImageTask.find(dexKit, descriptors) {
+                    matcher { usingStrings("msg_raw_img_send") }
+                }
             }
 
             WeLogger.i(TAG, "DexKit 查找结束，共找到 ${descriptors.size} 项")
@@ -211,12 +252,12 @@ class WeMessageApi : ApiHookItem(), IDexFind {
 
             // 初始化 Task (k40.g) 和 CrossParams (d40.i0) 的构造函数
             val taskClazz = dexClassImageTask.clazz
-            // k40.g 的构造函数签名: (String, int, String, String, d40.i0) -> 共5个参数
+            // k40.g 的构造函数签名: (String, int, String, String, d40.i0) -> 共 5 个参数
             taskConstructor = taskClazz.declaredConstructors.firstOrNull { it.parameterCount == 5 }
             taskConstructor?.isAccessible = true
 
             if (taskConstructor != null) {
-                // 获取 d40.i0 的 Class: 它是 k40.g 构造函数的第 5 个参数 (index 4)
+                // 获取 d40.i0 的 Class: 它是 k40.g 构造函数的第 5 个参数
                 crossParamsClass = taskConstructor!!.parameterTypes[4]
 
                 // d40.i0 是标准 Java Bean，通常有无参构造
@@ -247,6 +288,20 @@ class WeMessageApi : ApiHookItem(), IDexFind {
                 WeLogger.e(TAG, "初始化文件发送组件时失败", e)
             }
 
+            try {
+                INSTANCE = this
+
+                // 初始化服务获取逻辑
+                bindServiceFramework()
+                // 嗅探图片业务接口与方法
+                bindImageBusinessLogic()
+
+                WeLogger.i(TAG, "WeMessageApi 全动态链路初始化成功")
+            } catch (e: Exception) {
+                WeLogger.e(TAG, "Entry 初始化失败", e)
+            }
+
+
             WeLogger.i(TAG, "WeMessageApi 初始化完毕")
         } catch (e: Exception) {
             WeLogger.e(TAG, "Entry 初始化异常", e)
@@ -273,35 +328,31 @@ class WeMessageApi : ApiHookItem(), IDexFind {
         }
     }
 
-    /**
-     * 发送图片消息
-     */
+    /** 发送图片消息 */
     fun sendImage(toUser: String, imgPath: String): Boolean {
         return try {
-            val serviceClass = loadClass("er.x0")
-            val serviceManager = loadClass("x15.n0")
-            val imageService = XposedHelpers.callStaticMethod(serviceManager, "c", serviceClass) ?: return false
-            val selfWxid = XposedHelpers.callStaticMethod(loadClass("xv0.z1"), "r") as String
-            val i0Obj = XposedHelpers.newInstance(crossParamsClass)
-            val firstIntField = crossParamsClass?.declaredFields?.firstOrNull { it.type == Int::class.javaPrimitiveType }
-            if (firstIntField != null) {
-                firstIntField.isAccessible = true
-                firstIntField.set(i0Obj, 4)
-            }
-            val taskClazz = dexClassImageTask.clazz
-            val gVar = XposedHelpers.newInstance(taskClazz, imgPath, 0, selfWxid, toUser, i0Obj)
+            val apiInterface = imageServiceApiClass ?: return false
+            val taskClass = dexClassImageTask.clazz
 
-            val lastStringField = taskClazz.declaredFields.lastOrNull { it.type == String::class.java }
-            if (lastStringField != null) {
-                lastStringField.isAccessible = true
-                lastStringField.set(gVar, "media_generate_send_img")
-            }
-            XposedHelpers.callMethod(imageService, "nh", gVar)
+            // 动态获取单例
+            val serviceObj = getServiceMethod?.invoke(null, apiInterface) ?: return false
 
-            WeLogger.i(TAG, "Mvvm 任务提交成功: To=$toUser")
+            // 动态构造 CrossParams
+            val paramsClass = crossParamsClass ?: return false
+            val paramsObj = XposedHelpers.newInstance(paramsClass)
+            assignValueToFirstFieldByType(paramsObj, Int::class.javaPrimitiveType!!, 4)
+
+            // 构造任务对象
+            val taskObj = XposedHelpers.newInstance(taskClass, imgPath, 0, getSelfWxid(), toUser, paramsObj)
+            assignValueToLastFieldByType(taskObj, String::class.java, "media_generate_send_img")
+
+            // 执行异步发送
+            sendImageMethod?.invoke(serviceObj, taskObj)
+
+            WeLogger.i(TAG, "[sendImage] 任务已提交: $toUser")
             true
         } catch (e: Exception) {
-            WeLogger.e(TAG, "Mvvm 发送失败", e)
+            WeLogger.e(TAG, "[sendImage] 图片发送流程失败", e)
             false
         }
     }
@@ -334,18 +385,60 @@ class WeMessageApi : ApiHookItem(), IDexFind {
             shareFileMethod?.invoke(null, mediaMessage, appid ?: "", "", talker, 2, null)
             true
         } catch (e: Exception) {
-            WeLogger.e(TAG, "File发送失败", e)
+            WeLogger.e(TAG, "File 发送失败", e)
             false
         }
     }
 
-    private fun getSelfWxid(): String {
-        return try {
-            val sp = RuntimeConfig.getLauncherUIActivity().getSharedPreferences("com.tencent.mm_preferences", Context.MODE_PRIVATE)
-            sp.getString("login_weixin_username", "") ?: ""
-        } catch (e: Exception) {
-            WeLogger.w(TAG, "获取 selfWxid 失败")
-            ""
+    fun getSelfWxid(): String {
+        return getSelfWxidMethod?.invoke(null) as? String ?: ""
+    }
+
+    private fun bindServiceFramework() {
+        val smClazz = dexClassServiceManager.clazz
+        getServiceMethod = smClazz.declaredMethods.firstOrNull {
+            Modifier.isStatic(it.modifiers) && it.parameterCount == 1 && it.parameterTypes[0] == Class::class.java
+        }
+
+        val clClazz = dexClassConfigLogic.clazz
+        getSelfWxidMethod = clClazz.declaredMethods.firstOrNull {
+            Modifier.isStatic(it.modifiers) && it.parameterCount == 0 && it.returnType == String::class.java && it.name.length <= 2
+        }
+    }
+
+    private fun bindImageBusinessLogic() {
+        val implClazz = dexClassImageServiceImpl.clazz
+        val taskClazz = dexClassImageTask.clazz
+
+        // 自动提取 Api 接口
+        imageServiceApiClass = implClazz.interfaces.firstOrNull {
+            !it.name.startsWith("java.") && !it.name.startsWith("android.")
+        }
+
+        // 动态嗅探发送方法 (参数是 Task, 返回值是 Flow)
+        sendImageMethod = implClazz.declaredMethods.firstOrNull { m ->
+            m.parameterCount == 1 &&
+                    m.parameterTypes[0] == taskClazz &&
+                    m.returnType.name.contains("flow", ignoreCase = true)
+        }
+
+        // 动态确定 CrossParams 类型
+        taskClazz.declaredConstructors.firstOrNull { it.parameterCount == 5 }?.let {
+            crossParamsClass = it.parameterTypes[4]
+        }
+    }
+
+    private fun assignValueToFirstFieldByType(obj: Any, type: Class<*>, value: Any) {
+        obj.javaClass.declaredFields.firstOrNull { it.type == type }?.let {
+            it.isAccessible = true
+            it.set(obj, value)
+        }
+    }
+
+    private fun assignValueToLastFieldByType(obj: Any, type: Class<*>, value: Any) {
+        obj.javaClass.declaredFields.lastOrNull { it.type == type }?.let {
+            it.isAccessible = true
+            it.set(obj, value)
         }
     }
 }

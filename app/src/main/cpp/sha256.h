@@ -103,14 +103,14 @@ public:
             sprintf(buf + (i * 2), "%02x", digest[i]);
         }
         buf[64] = 0;
-        return std::string(buf);
+        return {buf};
     }
 
 private:
-    uint8_t m_data[64];
-    uint32_t m_data_len;
-    uint64_t m_bit_len;
-    uint32_t m_state[8]; // A, B, C, D, E, F, G, H
+    uint8_t m_data[64]{};
+    uint32_t m_data_len{};
+    uint64_t m_bit_len{};
+    uint32_t m_state[8]{}; // A, B, C, D, E, F, G, H
 
     static const uint32_t K[64];
 
