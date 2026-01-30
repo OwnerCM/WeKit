@@ -247,7 +247,7 @@ class WeRedPacketAuto : BaseClickableFunctionHookItem(), WeDatabaseApi.DatabaseI
         // 查找 onGYNetEnd 回调方法
         val receiveLuckyMoneyClassName = dexClsReceiveLuckyMoney.getDescriptorString()
         if (receiveLuckyMoneyClassName != null) {
-            val foundMethod = dexMethodOnGYNetEnd.find(dexKit, allowMultiple = true, descriptors) {
+            val foundMethod = dexMethodOnGYNetEnd.find(dexKit, descriptors,true) {
                 matcher {
                     declaredClass = receiveLuckyMoneyClassName
                     name = "onGYNetEnd"

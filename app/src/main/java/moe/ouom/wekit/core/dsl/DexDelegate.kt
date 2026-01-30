@@ -1,8 +1,8 @@
 package moe.ouom.wekit.core.dsl
 
-import de.robv.android.xposed.XposedHelpers
 import moe.ouom.wekit.config.RuntimeConfig
 import moe.ouom.wekit.dexkit.DexMethodDescriptor
+import moe.ouom.wekit.util.Initiator.loadClass
 import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.query.FindClass
 import org.luckypray.dexkit.query.FindMethod
@@ -28,10 +28,7 @@ class DexClassDelegate internal constructor(
     val clazz: Class<*>
         get() {
             if (cachedClass == null && descriptorString != null) {
-                cachedClass = XposedHelpers.findClass(
-                    descriptorString,
-                    RuntimeConfig.getHostClassLoader()
-                )
+                cachedClass = loadClass(descriptorString)
             }
             return cachedClass ?: throw IllegalStateException("Class not found for key: $key")
         }
@@ -141,8 +138,8 @@ class DexMethodDelegate internal constructor(
      */
     fun find(
         dexKit: DexKitBridge,
-        allowMultiple: Boolean = false,
         descriptors: MutableMap<String, String>? = null,
+        allowMultiple: Boolean = false,
         throwOnFailure: Boolean = true,
         resultIndex: Int = 0,
         block: FindMethod.() -> Unit
