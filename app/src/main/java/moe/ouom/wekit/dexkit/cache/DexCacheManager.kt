@@ -1,6 +1,8 @@
 package moe.ouom.wekit.dexkit.cache
 
 import android.content.Context
+import moe.ouom.wekit.config.WeConfig
+import moe.ouom.wekit.constants.Constants
 import moe.ouom.wekit.core.model.BaseHookItem
 import moe.ouom.wekit.dexkit.intf.IDexFind
 import moe.ouom.wekit.util.log.WeLogger
@@ -47,6 +49,10 @@ object DexCacheManager {
             if (cachedVersion != hostVersion) {
                 WeLogger.i("DexCacheManager", "Host version changed: $cachedVersion -> $hostVersion, clearing all cache")
                 clearAllCache()
+
+                // 重置"禁用版本适配"配置，确保新版本能够正常适配
+                WeConfig.getDefaultConfig().putBoolean(Constants.PrekDisableVersionAdaptation, false)
+                WeLogger.i("DexCacheManager", "Reset disable_version_adaptation to false due to version change")
             }
         }
 

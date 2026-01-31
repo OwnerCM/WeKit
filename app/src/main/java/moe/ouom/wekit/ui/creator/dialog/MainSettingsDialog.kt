@@ -86,6 +86,14 @@ class MainSettingsDialog(context: Context) : BaseRikkaDialog(context, "WeKit") {
             useFullKey = true // 因为 key 已经包含了前缀 PrekCfgXXX，所以必须设为 true
         )
 
+        addSwitchPreference(
+            key = Constants.PrekDisableVersionAdaptation,
+            title = "禁用版本适配",
+            summary = "开启后不会弹出 DEX 查找对话框，未适配功能将不会被加载",
+            iconName = "ic_outline_block_24",
+            useFullKey = true
+        )
+
         // ==========================================
         // 关于 (About)
         // ==========================================

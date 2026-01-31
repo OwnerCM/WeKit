@@ -341,7 +341,7 @@ class WeMessageApi : ApiHookItem(), IDexFind {
             // 利用异常字符串精准定位 Service 实现类和发送方法
             // -----------------------------------------------------------------------------
             // 定位 VoiceServiceImpl (tc0.k)
-            dexClassVoiceServiceImpl.find(dexKit, descriptors) {
+            dexClassVoiceServiceImpl.find(dexKit, descriptors, throwOnFailure = false) {
                 matcher {
                     usingStrings("MicroMsg.VoiceMsgAsyncSendFSC")
                     // 必须包含 sendSync 方法，且该方法使用特定字符串
