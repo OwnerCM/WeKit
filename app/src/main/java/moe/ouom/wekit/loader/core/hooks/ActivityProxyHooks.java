@@ -31,8 +31,12 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
+import lombok.SneakyThrows;
 import moe.ouom.wekit.config.RuntimeConfig;
 import moe.ouom.wekit.constants.PackageConstants;
 import moe.ouom.wekit.util.common.ModuleRes;
@@ -47,18 +51,15 @@ public class ActivityProxyHooks {
     private static boolean __stub_hooked = false;
 
     public static class ActProxyMgr {
-        public static final String ACTIVITY_PROXY_INTENT = "wekit_target_intent";
+        public static final String ACTIVITY_PROXY_INTENT_TOKEN = "wekit_target_intent_token";
 
-        // 宿主中的替身 Activity (Stub)
-        // 这个 Activity 必须在微信的 AndroidManifest.xml 中真实存在
+        // 这个 Activity 必须在微信的 AndroidManifest.xml 中真实存在且 exported=false 也可以，只要同进程
         public static final String STUB_DEFAULT_ACTIVITY = "com.tencent.mm.plugin.facedetect.ui.FaceTransparentStubUI";
 
         /**
-         * 判断是否为模块内的 Activity (需要 Hook 的)
+         * 判断是否为模块内的 Activity
          */
         public static boolean isModuleProxyActivity(String className) {
-            // 这里判断包名是否属于你的模块
-            // 只要是以 moe.ouom.wekit 开头的 Activity 都走代理逻辑
             return className != null && className.startsWith("moe.ouom.wekit");
         }
     }
@@ -124,9 +125,21 @@ public class ActivityProxyHooks {
         Object gDefault = gDefaultField.get(null);
 
         Class<?> singletonClass = Class.forName("android.util.Singleton");
+
         Field mInstanceField = singletonClass.getDeclaredField("mInstance");
         mInstanceField.setAccessible(true);
+
+        try {
+            Method getMethod = singletonClass.getDeclaredMethod("get");
+            getMethod.setAccessible(true);
+            getMethod.invoke(gDefault);
+        } catch (Exception ignored) {}
+
         Object mInstance = mInstanceField.get(gDefault);
+        if (mInstance == null) {
+            WeLogger.e("ActivityProxyHooks", "IActivityManager instance is null, abort hook.");
+            return;
+        }
 
         // 创建 IActivityManager 代理
         Object amProxy = Proxy.newProxyInstance(
@@ -146,11 +159,13 @@ public class ActivityProxyHooks {
             singletonClass.getMethod("get").invoke(singleton);
 
             Object mDefaultTaskMgr = mInstanceField.get(singleton);
-            Object proxy2 = Proxy.newProxyInstance(
-                    ActivityProxyHooks.class.getClassLoader(),
-                    new Class[]{Class.forName("android.app.IActivityTaskManager")},
-                    new IActivityManagerHandler(mDefaultTaskMgr));
-            mInstanceField.set(singleton, proxy2);
+            if (mDefaultTaskMgr != null) {
+                Object proxy2 = Proxy.newProxyInstance(
+                        ActivityProxyHooks.class.getClassLoader(),
+                        new Class[]{Class.forName("android.app.IActivityTaskManager")},
+                        new IActivityManagerHandler(mDefaultTaskMgr));
+                mInstanceField.set(singleton, proxy2);
+            }
         } catch (Exception ignored) {
             // Android 9 及以下没有这个类，忽略
         }
@@ -193,39 +208,75 @@ public class ActivityProxyHooks {
 
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-            if ("startActivity".equals(method.getName())) {
-                int index = -1;
-                // 寻找参数中的 Intent
+            String name = method.getName();
+
+            // 拦截 startActivity 以及 startActivities (Intent[])
+            if (name.startsWith("startActivity") || name.startsWith("startActivities")) {
                 for (int i = 0; i < args.length; i++) {
-                    if (args[i] instanceof Intent) {
-                        index = i;
-                        break;
+                    if (args[i] instanceof Intent raw) {
+                        if (shouldProxy(raw)) {
+                            args[i] = createTokenWrapper(raw);
+                        }
                     }
-                }
-
-                if (index != -1) {
-                    Intent raw = (Intent) args[index];
-                    ComponentName component = raw.getComponent();
-
-                    // 如果是模块的 Activity，进行拦截
-                    if (component != null && ActProxyMgr.isModuleProxyActivity(component.getClassName())) {
-                        Intent wrapper = new Intent();
-                        // 指向宿主中真实存在的 Activity (Stub)
-                        wrapper.setClassName(component.getPackageName(), ActProxyMgr.STUB_DEFAULT_ACTIVITY);
-                        // 保存原始 Intent
-                        wrapper.putExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT, raw);
-
-                        // 替换参数
-                        args[index] = wrapper;
-                        WeLogger.d("ActivityProxyHooks", "Hijacked startActivity: " + component.getClassName() + " -> " + ActProxyMgr.STUB_DEFAULT_ACTIVITY);
+                    else if (args[i] instanceof Intent[] rawIntents) {
+                        for (int j = 0; j < rawIntents.length; j++) {
+                            if (shouldProxy(rawIntents[j])) {
+                                rawIntents[j] = createTokenWrapper(rawIntents[j]);
+                            }
+                        }
                     }
                 }
             }
+
             try {
                 return method.invoke(mOrigin, args);
             } catch (InvocationTargetException ite) {
                 throw ite.getTargetException();
             }
+        }
+
+        /**
+         * 判断 Intent 是否需要被代理
+         */
+        private boolean shouldProxy(Intent intent) {
+            if (intent == null) return false;
+            ComponentName component = intent.getComponent();
+            // 检查 Component 是否存在且属于模块包名
+            return component != null && ActProxyMgr.isModuleProxyActivity(component.getClassName());
+        }
+
+        /**
+         * 构建携带 Token 的替身 Intent
+         * 原始 Intent 入库 -> 生成 Token -> 构造仅含 Token 的 Wrapper
+         */
+        private Intent createTokenWrapper(Intent raw) {
+            // 将原始 Intent 存入静态缓存，获取 Token
+            String token = IntentTokenCache.put(new Intent(raw));
+
+            Intent wrapper = new Intent();
+            wrapper.setComponent(new ComponentName(PackageConstants.PACKAGE_NAME_WECHAT, ActProxyMgr.STUB_DEFAULT_ACTIVITY));
+            wrapper.setFlags(raw.getFlags());
+            wrapper.setAction(raw.getAction());
+            wrapper.setDataAndType(raw.getData(), raw.getType());
+
+            // 复制 Categories
+            if (raw.getCategories() != null) {
+                for (String cat : raw.getCategories()) {
+                    wrapper.addCategory(cat);
+                }
+            }
+            wrapper.putExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT_TOKEN, token);
+
+            // 强制设置 HybridClassLoader，避免序列化问题
+            ClassLoader hybridCL = ParcelableFixer.getHybridClassLoader();
+            if (hybridCL != null) {
+                wrapper.setExtrasClassLoader(hybridCL);
+            }
+
+            WeLogger.d("ActivityProxyHooks", "Hijacked startActivity via Token: " +
+                    Objects.requireNonNull(raw.getComponent()).getClassName() + " -> " + ActProxyMgr.STUB_DEFAULT_ACTIVITY);
+
+            return wrapper;
         }
     }
 
@@ -250,10 +301,50 @@ public class ActivityProxyHooks {
                 handleExecuteTransaction(msg);
             }
 
+            boolean handledByNext = false;
             if (mNextCallbackHook != null) {
-                return mNextCallbackHook.handleMessage(msg);
+                try {
+                    handledByNext = mNextCallbackHook.handleMessage(msg);
+                } catch (Throwable t) {
+                    WeLogger.e("ActivityProxyHooks", "Next callback failed", t);
+                }
             }
-            return false;
+
+            return handledByNext;
+        }
+
+        /**
+         * 统一还原 Intent 的逻辑
+         */
+        private Intent unwrapIntent(Intent wrapper) {
+            if (wrapper == null) return null;
+
+            // 先修复 wrapper 的 ClassLoader，防止读取 token 时报错
+            ClassLoader hybridCL = ParcelableFixer.getHybridClassLoader();
+            if (hybridCL != null) {
+                wrapper.setExtrasClassLoader(hybridCL);
+            }
+
+            // 尝试读取 Token
+            if (wrapper.hasExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT_TOKEN)) {
+                String token = wrapper.getStringExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT_TOKEN);
+                Intent realIntent = IntentTokenCache.getAndRemove(token); // 取回并移除
+
+                if (realIntent != null) {
+                    // 修复真实 Intent 的 ClassLoader
+                    if (hybridCL != null) {
+                        realIntent.setExtrasClassLoader(hybridCL);
+                        Bundle extras = realIntent.getExtras();
+                        if (extras != null) {
+                            extras.setClassLoader(hybridCL);
+                        }
+                    }
+                    return realIntent;
+                } else {
+                    WeLogger.w("ActivityProxyHooks", "Token expired or lost in Handler: " + token);
+                }
+            }
+            return null;
         }
 
         private void handleLaunchActivity(Message msg) {
@@ -261,13 +352,11 @@ public class ActivityProxyHooks {
                 Object record = msg.obj;
                 Field intentField = record.getClass().getDeclaredField("intent");
                 intentField.setAccessible(true);
-                Intent intent = (Intent) intentField.get(record);
-                if (intent != null && intent.hasExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT)) {
-                    Intent realIntent = intent.getParcelableExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT);
-                    if (realIntent != null) {
-                        // 还原为真实的 Module Intent
-                        intentField.set(record, realIntent);
-                    }
+                Intent wrapper = (Intent) intentField.get(record);
+
+                Intent real = unwrapIntent(wrapper);
+                if (real != null) {
+                    intentField.set(record, real);
                 }
             } catch (Exception e) {
                 WeLogger.e("ActivityProxyHooks", "handleLaunchActivity error", e);
@@ -285,13 +374,11 @@ public class ActivityProxyHooks {
                         if (item.getClass().getName().contains("LaunchActivityItem")) {
                             Field intentField = item.getClass().getDeclaredField("mIntent");
                             intentField.setAccessible(true);
-                            Intent intent = (Intent) intentField.get(item);
-                            if (intent != null && intent.hasExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT)) {
-                                Intent realIntent = intent.getParcelableExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT);
-                                if (realIntent != null) {
-                                    // 还原为真实的 Module Intent
-                                    intentField.set(item, realIntent);
-                                }
+                            Intent wrapper = (Intent) intentField.get(item);
+
+                            Intent real = unwrapIntent(wrapper);
+                            if (real != null) {
+                                intentField.set(item, real);
                             }
                         }
                     }
@@ -314,17 +401,51 @@ public class ActivityProxyHooks {
         }
 
         /**
+         * 尝试在 newActivity 阶段最后一次还原 Intent
+         */
+        private Intent tryRecoverIntent(Intent intent) {
+            if (intent != null && intent.hasExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT_TOKEN)) {
+                ClassLoader hybridCL = ParcelableFixer.getHybridClassLoader();
+                if (hybridCL != null) intent.setExtrasClassLoader(hybridCL);
+
+                String token = intent.getStringExtra(ActProxyMgr.ACTIVITY_PROXY_INTENT_TOKEN);
+                Intent real = IntentTokenCache.getAndRemove(token);
+
+                if (real != null) {
+                    if (hybridCL != null) {
+                        real.setExtrasClassLoader(hybridCL);
+                        Bundle extras = real.getExtras();
+                        if (extras != null) extras.setClassLoader(hybridCL);
+                    }
+                    return real;
+                }
+            }
+            return null;
+        }
+
+        /**
          * 实例化 Activity
          * 如果系统 ClassLoader 找不到类，则尝试使用模块 ClassLoader 加载
          */
+        @SneakyThrows
         @Override
-        public Activity newActivity(ClassLoader cl, String className, Intent intent) throws InstantiationException, IllegalAccessException, ClassNotFoundException {
+        public Activity newActivity(ClassLoader cl, String className, Intent intent)
+                throws InstantiationException, IllegalAccessException, ClassNotFoundException {
+
+            // 兜底：如果 intent 仍然是 stub 的 wrapper，尝试还原
+            Intent recovered = tryRecoverIntent(intent);
+            if (recovered != null && recovered.getComponent() != null) {
+                intent = recovered;
+                className = recovered.getComponent().getClassName();
+                WeLogger.w("ProxyInstrumentation", "Recovered intent in newActivity fallback: " + className);
+            }
+
             try {
                 return mBase.newActivity(cl, className, intent);
-            } catch (ClassNotFoundException | InstantiationException e) {
+            } catch (ClassNotFoundException e) {
                 if (ActProxyMgr.isModuleProxyActivity(className)) {
-                    // 使用模块的 ClassLoader
-                    return (Activity) Objects.requireNonNull(ActivityProxyHooks.class.getClassLoader()).loadClass(className).newInstance();
+                    ClassLoader moduleCL = Objects.requireNonNull(getClass().getClassLoader());
+                    return (Activity) moduleCL.loadClass(className).newInstance();
                 }
                 throw e;
             }
@@ -336,12 +457,34 @@ public class ActivityProxyHooks {
             return mBase.newActivity(clazz, context, token, application, intent, info, title, parent, id, lastNonConfigurationInstance);
         }
 
-        /**
-         * 关键重写：Activity 创建时注入资源
-         */
         @Override
         public void callActivityOnCreate(Activity activity, Bundle icicle) {
-            checkAndInjectResources(activity);
+            WeLogger.d("ProxyInst",
+                    "callActivityOnCreate: " + activity.getClass().getName() +
+                            " isModule=" + ActProxyMgr.isModuleProxyActivity(activity.getClass().getName()));
+
+            boolean isModuleAct = ActProxyMgr.isModuleProxyActivity(activity.getClass().getName());
+
+            if (isModuleAct) {
+                checkAndInjectResources(activity);
+
+                ClassLoader hybridCL = ParcelableFixer.getHybridClassLoader();
+                if (hybridCL != null) {
+                    try {
+                        Field f = Activity.class.getDeclaredField("mClassLoader");
+                        f.setAccessible(true);
+                        f.set(activity, hybridCL);
+                    } catch (Throwable ignored) {}
+
+                    Intent intent = activity.getIntent();
+                    if (intent != null) {
+                        intent.setExtrasClassLoader(hybridCL);
+                        Bundle ex = intent.getExtras();
+                        if (ex != null) ex.setClassLoader(hybridCL);
+                    }
+                }
+            }
+
             mBase.callActivityOnCreate(activity, icicle);
         }
 
@@ -353,76 +496,320 @@ public class ActivityProxyHooks {
 
         private void checkAndInjectResources(Activity activity) {
             if (ActProxyMgr.isModuleProxyActivity(activity.getClass().getName())) {
-                // 注入模块资源，防止资源 ID 找不到导致 Crash
                 ModuleRes.init(activity, PackageConstants.PACKAGE_NAME_SELF);
             }
         }
 
-        // 以下为 Instrumentation 的完整委托实现 //
+        @Override
+        public void onCreate(Bundle arguments) {
+            mBase.onCreate(arguments);
+        }
 
-        @Override public void onCreate(Bundle arguments) { mBase.onCreate(arguments); }
-        @Override public void start() { mBase.start(); }
-        @Override public void onStart() { mBase.onStart(); }
-        @Override public boolean onException(Object obj, Throwable e) { return mBase.onException(obj, e); }
-        @Override public void sendStatus(int resultCode, Bundle results) { mBase.sendStatus(resultCode, results); }
-        @Override public void addResults(Bundle results) { mBase.addResults(results); }
-        @Override public void finish(int resultCode, Bundle results) { mBase.finish(resultCode, results); }
-        @Override public void setAutomaticPerformanceSnapshots() { mBase.setAutomaticPerformanceSnapshots(); }
-        @Override public void startPerformanceSnapshot() { mBase.startPerformanceSnapshot(); }
-        @Override public void endPerformanceSnapshot() { mBase.endPerformanceSnapshot(); }
-        @Override public void onDestroy() { mBase.onDestroy(); }
-        @Override public Context getContext() { return mBase.getContext(); }
-        @Override public ComponentName getComponentName() { return mBase.getComponentName(); }
-        @Override public Context getTargetContext() { return mBase.getTargetContext(); }
-        @Override public String getProcessName() { return mBase.getProcessName(); }
-        @Override public boolean isProfiling() { return mBase.isProfiling(); }
-        @Override public void startProfiling() { mBase.startProfiling(); }
-        @Override public void stopProfiling() { mBase.stopProfiling(); }
-        @Override public void setInTouchMode(boolean inTouch) { mBase.setInTouchMode(inTouch); }
-        @Override public void waitForIdle(Runnable recipient) { mBase.waitForIdle(recipient); }
-        @Override public void waitForIdleSync() { mBase.waitForIdleSync(); }
-        @Override public void runOnMainSync(Runnable runner) { mBase.runOnMainSync(runner); }
-        @Override public Activity startActivitySync(Intent intent) { return mBase.startActivitySync(intent); }
+        @Override
+        public void start() {
+            mBase.start();
+        }
+
+        @Override
+        public void onStart() {
+            mBase.onStart();
+        }
+
+        @Override
+        public boolean onException(Object obj, Throwable e) {
+            return mBase.onException(obj, e);
+        }
+
+        @Override
+        public void sendStatus(int resultCode, Bundle results) {
+            mBase.sendStatus(resultCode, results);
+        }
+
+        @Override
+        public void addResults(Bundle results) {
+            mBase.addResults(results);
+        }
+
+        @Override
+        public void finish(int resultCode, Bundle results) {
+            mBase.finish(resultCode, results);
+        }
+
+        @Override
+        public void setAutomaticPerformanceSnapshots() {
+            mBase.setAutomaticPerformanceSnapshots();
+        }
+
+        @Override
+        public void startPerformanceSnapshot() {
+            mBase.startPerformanceSnapshot();
+        }
+
+        @Override
+        public void endPerformanceSnapshot() {
+            mBase.endPerformanceSnapshot();
+        }
+
+        @Override
+        public void onDestroy() {
+            mBase.onDestroy();
+        }
+
+        @Override
+        public Context getContext() {
+            return mBase.getContext();
+        }
+
+        @Override
+        public ComponentName getComponentName() {
+            return mBase.getComponentName();
+        }
+
+        @Override
+        public Context getTargetContext() {
+            return mBase.getTargetContext();
+        }
+
+        @Override
+        public String getProcessName() {
+            return mBase.getProcessName();
+        }
+
+        @Override
+        public boolean isProfiling() {
+            return mBase.isProfiling();
+        }
+
+        @Override
+        public void startProfiling() {
+            mBase.startProfiling();
+        }
+
+        @Override
+        public void stopProfiling() {
+            mBase.stopProfiling();
+        }
+
+        @Override
+        public void setInTouchMode(boolean inTouch) {
+            mBase.setInTouchMode(inTouch);
+        }
+
+        @Override
+        public void waitForIdle(Runnable recipient) {
+            mBase.waitForIdle(recipient);
+        }
+
+        @Override
+        public void waitForIdleSync() {
+            mBase.waitForIdleSync();
+        }
+
+        @Override
+        public void runOnMainSync(Runnable runner) {
+            mBase.runOnMainSync(runner);
+        }
+
+        @Override
+        public Activity startActivitySync(Intent intent) {
+            return mBase.startActivitySync(intent);
+        }
+
         @NonNull
-        @Override public Activity startActivitySync(@NonNull Intent intent, Bundle options) { return mBase.startActivitySync(intent, options); }
-        @Override public void addMonitor(ActivityMonitor monitor) { mBase.addMonitor(monitor); }
-        @Override public ActivityMonitor addMonitor(IntentFilter filter, ActivityResult result, boolean block) { return mBase.addMonitor(filter, result, block); }
-        @Override public ActivityMonitor addMonitor(String cls, ActivityResult result, boolean block) { return mBase.addMonitor(cls, result, block); }
-        @Override public boolean checkMonitorHit(ActivityMonitor monitor, int minHits) { return mBase.checkMonitorHit(monitor, minHits); }
-        @Override public Activity waitForMonitor(ActivityMonitor monitor) { return mBase.waitForMonitor(monitor); }
-        @Override public Activity waitForMonitorWithTimeout(ActivityMonitor monitor, long timeOut) { return mBase.waitForMonitorWithTimeout(monitor, timeOut); }
-        @Override public void removeMonitor(ActivityMonitor monitor) { mBase.removeMonitor(monitor); }
-        @Override public boolean invokeMenuActionSync(Activity targetActivity, int id, int flag) { return mBase.invokeMenuActionSync(targetActivity, id, flag); }
-        @Override public boolean invokeContextMenuAction(Activity targetActivity, int id, int flag) { return mBase.invokeContextMenuAction(targetActivity, id, flag); }
-        @Override public void sendStringSync(String text) { mBase.sendStringSync(text); }
-        @Override public void sendKeySync(KeyEvent event) { mBase.sendKeySync(event); }
-        @Override public void sendKeyDownUpSync(int key) { mBase.sendKeyDownUpSync(key); }
-        @Override public void sendCharacterSync(int keyCode) { mBase.sendCharacterSync(keyCode); }
-        @Override public void sendPointerSync(MotionEvent event) { mBase.sendPointerSync(event); }
-        @Override public void sendTrackballEventSync(MotionEvent event) { mBase.sendTrackballEventSync(event); }
-        @Override public Application newApplication(ClassLoader cl, String className, Context context) throws ClassNotFoundException, IllegalAccessException, InstantiationException { return mBase.newApplication(cl, className, context); }
-        @Override public void callApplicationOnCreate(Application app) { mBase.callApplicationOnCreate(app); }
-        @Override public void callActivityOnDestroy(Activity activity) { mBase.callActivityOnDestroy(activity); }
-        @Override public void callActivityOnRestoreInstanceState(@NonNull Activity activity, @NonNull Bundle savedInstanceState) { mBase.callActivityOnRestoreInstanceState(activity, savedInstanceState); }
-        @Override public void callActivityOnRestoreInstanceState(@NonNull Activity activity, Bundle savedInstanceState, PersistableBundle persistentState) { mBase.callActivityOnRestoreInstanceState(activity, savedInstanceState, persistentState); }
-        @Override public void callActivityOnPostCreate(@NonNull Activity activity, Bundle savedInstanceState) { mBase.callActivityOnPostCreate(activity, savedInstanceState); }
-        @Override public void callActivityOnPostCreate(@NonNull Activity activity, @Nullable Bundle savedInstanceState, @Nullable PersistableBundle persistentState) { mBase.callActivityOnPostCreate(activity, savedInstanceState, persistentState); }
-        @Override public void callActivityOnNewIntent(Activity activity, Intent intent) { mBase.callActivityOnNewIntent(activity, intent); }
-        @Override public void callActivityOnStart(Activity activity) { mBase.callActivityOnStart(activity); }
-        @Override public void callActivityOnRestart(Activity activity) { mBase.callActivityOnRestart(activity); }
-        @Override public void callActivityOnResume(Activity activity) { mBase.callActivityOnResume(activity); }
-        @Override public void callActivityOnStop(Activity activity) { mBase.callActivityOnStop(activity); }
-        @Override public void callActivityOnSaveInstanceState(@NonNull Activity activity, @NonNull Bundle outState) { mBase.callActivityOnSaveInstanceState(activity, outState); }
-        @Override public void callActivityOnSaveInstanceState(@NonNull Activity activity, @NonNull Bundle outState, PersistableBundle outPersistentState) { mBase.callActivityOnSaveInstanceState(activity, outState, outPersistentState); }
-        @Override public void callActivityOnPause(Activity activity) { mBase.callActivityOnPause(activity); }
-        @Override public void callActivityOnUserLeaving(Activity activity) { mBase.callActivityOnUserLeaving(activity); }
-        @Override public void startAllocCounting() { mBase.startAllocCounting(); }
-        @Override public void stopAllocCounting() { mBase.stopAllocCounting(); }
-        @Override public Bundle getAllocCounts() { return mBase.getAllocCounts(); }
-        @Override public Bundle getBinderCounts() { return mBase.getBinderCounts(); }
-        @Override public UiAutomation getUiAutomation() { return mBase.getUiAutomation(); }
-        @Override public UiAutomation getUiAutomation(int flags) { return mBase.getUiAutomation(flags); }
-        @Override public TestLooperManager acquireLooperManager(Looper looper) { return mBase.acquireLooperManager(looper); }
+        @Override
+        public Activity startActivitySync(@NonNull Intent intent, Bundle options) {
+            return mBase.startActivitySync(intent, options);
+        }
+
+        @Override
+        public void addMonitor(ActivityMonitor monitor) {
+            mBase.addMonitor(monitor);
+        }
+
+        @Override
+        public ActivityMonitor addMonitor(IntentFilter filter, ActivityResult result, boolean block) {
+            return mBase.addMonitor(filter, result, block);
+        }
+
+        @Override
+        public ActivityMonitor addMonitor(String cls, ActivityResult result, boolean block) {
+            return mBase.addMonitor(cls, result, block);
+        }
+
+        @Override
+        public boolean checkMonitorHit(ActivityMonitor monitor, int minHits) {
+            return mBase.checkMonitorHit(monitor, minHits);
+        }
+
+        @Override
+        public Activity waitForMonitor(ActivityMonitor monitor) {
+            return mBase.waitForMonitor(monitor);
+        }
+
+        @Override
+        public Activity waitForMonitorWithTimeout(ActivityMonitor monitor, long timeOut) {
+            return mBase.waitForMonitorWithTimeout(monitor, timeOut);
+        }
+
+        @Override
+        public void removeMonitor(ActivityMonitor monitor) {
+            mBase.removeMonitor(monitor);
+        }
+
+        @Override
+        public boolean invokeMenuActionSync(Activity targetActivity, int id, int flag) {
+            return mBase.invokeMenuActionSync(targetActivity, id, flag);
+        }
+
+        @Override
+        public boolean invokeContextMenuAction(Activity targetActivity, int id, int flag) {
+            return mBase.invokeContextMenuAction(targetActivity, id, flag);
+        }
+
+        @Override
+        public void sendStringSync(String text) {
+            mBase.sendStringSync(text);
+        }
+
+        @Override
+        public void sendKeySync(KeyEvent event) {
+            mBase.sendKeySync(event);
+        }
+
+        @Override
+        public void sendKeyDownUpSync(int key) {
+            mBase.sendKeyDownUpSync(key);
+        }
+
+        @Override
+        public void sendCharacterSync(int keyCode) {
+            mBase.sendCharacterSync(keyCode);
+        }
+
+        @Override
+        public void sendPointerSync(MotionEvent event) {
+            mBase.sendPointerSync(event);
+        }
+
+        @Override
+        public void sendTrackballEventSync(MotionEvent event) {
+            mBase.sendTrackballEventSync(event);
+        }
+
+        @Override
+        public Application newApplication(ClassLoader cl, String className, Context context) throws ClassNotFoundException, IllegalAccessException, InstantiationException {
+            return mBase.newApplication(cl, className, context);
+        }
+
+        @Override
+        public void callApplicationOnCreate(Application app) {
+            mBase.callApplicationOnCreate(app);
+        }
+
+        @Override
+        public void callActivityOnDestroy(Activity activity) {
+            mBase.callActivityOnDestroy(activity);
+        }
+
+        @Override
+        public void callActivityOnRestoreInstanceState(@NonNull Activity activity, @NonNull Bundle savedInstanceState) {
+            mBase.callActivityOnRestoreInstanceState(activity, savedInstanceState);
+        }
+
+        @Override
+        public void callActivityOnRestoreInstanceState(@NonNull Activity activity, Bundle savedInstanceState, PersistableBundle persistentState) {
+            mBase.callActivityOnRestoreInstanceState(activity, savedInstanceState, persistentState);
+        }
+
+        @Override
+        public void callActivityOnPostCreate(@NonNull Activity activity, Bundle savedInstanceState) {
+            mBase.callActivityOnPostCreate(activity, savedInstanceState);
+        }
+
+        @Override
+        public void callActivityOnPostCreate(@NonNull Activity activity, @Nullable Bundle savedInstanceState, @Nullable PersistableBundle persistentState) {
+            mBase.callActivityOnPostCreate(activity, savedInstanceState, persistentState);
+        }
+
+        @Override
+        public void callActivityOnNewIntent(Activity activity, Intent intent) {
+            mBase.callActivityOnNewIntent(activity, intent);
+        }
+
+        @Override
+        public void callActivityOnStart(Activity activity) {
+            mBase.callActivityOnStart(activity);
+        }
+
+        @Override
+        public void callActivityOnRestart(Activity activity) {
+            mBase.callActivityOnRestart(activity);
+        }
+
+        @Override
+        public void callActivityOnResume(Activity activity) {
+            mBase.callActivityOnResume(activity);
+        }
+
+        @Override
+        public void callActivityOnStop(Activity activity) {
+            mBase.callActivityOnStop(activity);
+        }
+
+        @Override
+        public void callActivityOnSaveInstanceState(@NonNull Activity activity, @NonNull Bundle outState) {
+            mBase.callActivityOnSaveInstanceState(activity, outState);
+        }
+
+        @Override
+        public void callActivityOnSaveInstanceState(@NonNull Activity activity, @NonNull Bundle outState, PersistableBundle outPersistentState) {
+            mBase.callActivityOnSaveInstanceState(activity, outState, outPersistentState);
+        }
+
+        @Override
+        public void callActivityOnPause(Activity activity) {
+            mBase.callActivityOnPause(activity);
+        }
+
+        @Override
+        public void callActivityOnUserLeaving(Activity activity) {
+            mBase.callActivityOnUserLeaving(activity);
+        }
+
+        @Override
+        public void startAllocCounting() {
+            mBase.startAllocCounting();
+        }
+
+        @Override
+        public void stopAllocCounting() {
+            mBase.stopAllocCounting();
+        }
+
+        @Override
+        public Bundle getAllocCounts() {
+            return mBase.getAllocCounts();
+        }
+
+        @Override
+        public Bundle getBinderCounts() {
+            return mBase.getBinderCounts();
+        }
+
+        @Override
+        public UiAutomation getUiAutomation() {
+            return mBase.getUiAutomation();
+        }
+
+        @Override
+        public UiAutomation getUiAutomation(int flags) {
+            return mBase.getUiAutomation(flags);
+        }
+
+        @Override
+        public TestLooperManager acquireLooperManager(Looper looper) {
+            return mBase.acquireLooperManager(looper);
+        }
     }
 
     /**
@@ -439,17 +826,26 @@ public class ActivityProxyHooks {
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             if ("getActivityInfo".equals(method.getName())) {
-                ComponentName component = (ComponentName) args[0];
+                ComponentName component = null;
                 int flags = 0;
-                if (args[1] instanceof Number) {
-                    flags = ((Number) args[1]).intValue();
+                boolean flagsFound = false;
+
+                for (Object arg : args) {
+                    if (arg instanceof ComponentName) {
+                        component = (ComponentName) arg;
+                    } else if (arg instanceof Long) {
+                        flags = ((Long) arg).intValue();
+                        flagsFound = true;
+                    } else if (arg instanceof Integer && !flagsFound) {
+                        flags = (Integer) arg;
+                    }
                 }
 
                 if (component != null && ActProxyMgr.isModuleProxyActivity(component.getClassName())) {
-                    // 构造并返回伪造的 ActivityInfo
                     return CounterfeitActivityInfoFactory.makeProxyActivityInfo(component.getClassName(), flags);
                 }
             }
+
             try {
                 return method.invoke(mTarget, args);
             } catch (InvocationTargetException e) {
@@ -484,6 +880,58 @@ public class ActivityProxyHooks {
 
             ai.launchMode = ActivityInfo.LAUNCH_MULTIPLE;
             return ai;
+        }
+    }
+
+    private static class IntentTokenCache {
+        private static class Entry {
+            Intent intent;
+            long timestamp;
+            Entry(Intent i) { intent = i; timestamp = System.currentTimeMillis(); }
+        }
+
+        private static final Map<String, Entry> sCache = new ConcurrentHashMap<>();
+        private static final long EXPIRE_MS = 60 * 1000;
+
+        static String put(Intent intent) {
+            cleanup();
+
+            String token = UUID.randomUUID().toString();
+            sCache.put(token, new Entry(intent));
+            return token;
+        }
+
+        static Intent getAndRemove(String token) {
+            if (token == null) return null;
+            Entry entry = sCache.remove(token);
+            if (entry == null) return null;
+
+            long now = System.currentTimeMillis();
+            if (now - entry.timestamp > EXPIRE_MS) {
+                return null;
+            }
+            return entry.intent;
+        }
+
+        static Intent peek(String token) {
+            if (token == null) return null;
+            Entry entry = sCache.get(token);
+            if (entry == null) return null;
+
+            if (isExpired(entry)) {
+                sCache.remove(token);
+                return null;
+            }
+            return entry.intent;
+        }
+
+        private static boolean isExpired(Entry entry) {
+            return System.currentTimeMillis() - entry.timestamp > EXPIRE_MS;
+        }
+
+        private static void cleanup() {
+            long now = System.currentTimeMillis();
+            sCache.entrySet().removeIf(stringEntryEntry -> now - stringEntryEntry.getValue().timestamp > EXPIRE_MS);
         }
     }
 }

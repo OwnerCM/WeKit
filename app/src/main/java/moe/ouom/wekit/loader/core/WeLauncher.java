@@ -4,6 +4,7 @@ import static moe.ouom.wekit.constants.Constants.CLAZZ_WECHAT_LAUNCHER_UI;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
@@ -34,8 +35,16 @@ public class WeLauncher {
 
         int currentProcessType = SyncUtils.getProcessType();
         String currentProcessName = SyncUtils.getProcessName();
-
         WeLogger.i("WeLauncher", "Init start. Process: " + currentProcessName + " (Type: " + currentProcessType + ")");
+
+        try {
+            moe.ouom.wekit.loader.core.hooks.ParcelableFixer.init(
+                    cl, WeLauncher.class.getClassLoader()
+            );
+            WeLogger.i("WeLauncher", "ParcelableFixer installed.");
+        } catch (Throwable e) {
+            WeLogger.e("WeLauncher", "Failed to install ParcelableFixer", e);
+        }
 
         // 加载宿主版本信息
         try {
@@ -45,10 +54,7 @@ public class WeLauncher {
             if (pInfo != null) {
                 RuntimeConfig.setWechatVersionName(pInfo.versionName);
                 RuntimeConfig.setWechatVersionCode(pInfo.getLongVersionCode());
-
                 moe.ouom.wekit.dexkit.cache.DexCacheManager.INSTANCE.init(context, Objects.requireNonNull(pInfo.versionName));
-
-                WeLogger.i("Host Version: " + RuntimeConfig.getWechatVersionName() + " (" + RuntimeConfig.getWechatVersionCode() + ")");
             }
         } catch (Throwable e) {
             WeLogger.e("WeLauncher: Failed to load version info", e);
@@ -60,24 +66,24 @@ public class WeLauncher {
             return;
         }
 
-        try {
-            Context appContext = context.getApplicationContext();
-            if (appContext == null) appContext = context;
-
-            ActivityProxyHooks.initForStubActivity(appContext);
-            WeLogger.i("WeLauncher", "Activity Proxy Hooks installed successfully.");
-        } catch (Throwable e) {
-            WeLogger.e("WeLauncher: Failed to install Activity Proxy Hooks", e);
-        }
-
+        // 仅在主进程安装 Activity 代理 Hook
         if (currentProcessType == SyncUtils.PROC_MAIN) {
+            try {
+                Context appContext = context.getApplicationContext();
+                if (appContext == null) appContext = context;
+
+                ActivityProxyHooks.initForStubActivity(appContext);
+                WeLogger.i("WeLauncher", "Activity Proxy Hooks installed successfully (Main Process).");
+            } catch (Throwable e) {
+                WeLogger.e("WeLauncher: Failed to install Activity Proxy Hooks", e);
+            }
+
             initMainProcessHooks(cl);
         } else {
             WeLogger.i("WeLauncher", "Skipping UI hooks for non-main process: " + currentProcessName);
         }
 
         // 加载功能模块
-        // 将当前进程类型传递进去，由 SecretLoader 内部根据 @HookItem 注解进行筛选
         try {
             SecretLoader.load(currentProcessType);
         } catch (Throwable e) {
@@ -116,17 +122,10 @@ public class WeLauncher {
                     RuntimeConfig.setLauncherUIActivity(activity);
                     SharedPreferences sharedPreferences = activity.getSharedPreferences("com.tencent.mm_preferences", 0);
 
-                    String login_weixin_username = sharedPreferences.getString("login_weixin_username", "");
-                    String last_login_nick_name = sharedPreferences.getString("last_login_nick_name", "");
-                    String login_user_name = sharedPreferences.getString("login_user_name", "");
-                    String last_login_uin = sharedPreferences.getString("last_login_uin", "0");
-
-                    RuntimeConfig.setLogin_weixin_username(login_weixin_username);
-                    RuntimeConfig.setLast_login_nick_name(last_login_nick_name);
-                    RuntimeConfig.setLogin_user_name(login_user_name);
-                    RuntimeConfig.setLast_login_uin(last_login_uin);
-
-//                    WeLogger.d("WeLauncher", "User Info Loaded: " + last_login_nick_name + " (" + login_weixin_username + ")");
+                    RuntimeConfig.setLogin_weixin_username(sharedPreferences.getString("login_weixin_username", ""));
+                    RuntimeConfig.setLast_login_nick_name(sharedPreferences.getString("last_login_nick_name", ""));
+                    RuntimeConfig.setLogin_user_name(sharedPreferences.getString("login_user_name", ""));
+                    RuntimeConfig.setLast_login_uin(sharedPreferences.getString("last_login_uin", "0"));
                 }
             });
 

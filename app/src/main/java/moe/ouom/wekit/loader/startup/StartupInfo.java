@@ -21,7 +21,6 @@ public class StartupInfo {
     private static String modulePath;
 
     private static Boolean isInitMethod;
-    @Getter
     public static Application hostApp;
     private static ILoaderService loaderService;
     private static IHookBridge hookBridge;

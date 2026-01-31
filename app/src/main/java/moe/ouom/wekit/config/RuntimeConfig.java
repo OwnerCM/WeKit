@@ -15,9 +15,7 @@ public class RuntimeConfig {
     }
 
     private static WeakReference<Activity> launcherUIActivityRef;
-    @Getter
     public static ClassLoader hostClassLoader;
-    @Getter
     public static ApplicationInfo hostApplicationInfo;
 
     // account info //
