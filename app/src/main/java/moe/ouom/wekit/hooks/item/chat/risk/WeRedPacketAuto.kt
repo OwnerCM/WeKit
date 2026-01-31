@@ -15,7 +15,7 @@ import moe.ouom.wekit.core.dsl.dexMethod
 import moe.ouom.wekit.core.model.BaseClickableFunctionHookItem
 import moe.ouom.wekit.dexkit.intf.IDexFind
 import moe.ouom.wekit.hooks.core.annotation.HookItem
-import moe.ouom.wekit.hooks.sdk.api.WeDatabaseApi
+import moe.ouom.wekit.hooks.sdk.api.WeDatabaseListener
 import moe.ouom.wekit.hooks.sdk.api.WeNetworkApi
 import moe.ouom.wekit.ui.creator.dialog.item.chat.risk.WeRedPacketConfigDialog
 import moe.ouom.wekit.util.log.WeLogger
@@ -26,7 +26,7 @@ import kotlin.random.Random
 
 @SuppressLint("DiscouragedApi")
 @HookItem(path = "聊天与消息/自动抢红包", desc = "监听消息并自动拆开红包")
-class WeRedPacketAuto : BaseClickableFunctionHookItem(), WeDatabaseApi.DatabaseInsertListener, IDexFind {
+class WeRedPacketAuto : BaseClickableFunctionHookItem(), WeDatabaseListener.DatabaseInsertListener, IDexFind {
 
     private val dexClsReceiveLuckyMoney by dexClass()
     private val dexClsOpenLuckyMoney by dexClass()
@@ -47,7 +47,7 @@ class WeRedPacketAuto : BaseClickableFunctionHookItem(), WeDatabaseApi.DatabaseI
     override fun entry(classLoader: ClassLoader) {
         WeLogger.i("WeRedPacketAuto: entry() 被调用，开始注册数据库监听")
         // 注册数据库监听
-        WeDatabaseApi.addListener(this)
+        WeDatabaseListener.addListener(this)
         WeLogger.i("WeRedPacketAuto: 数据库监听器已注册")
 
         // Hook 具体的网络回调
@@ -203,7 +203,7 @@ class WeRedPacketAuto : BaseClickableFunctionHookItem(), WeDatabaseApi.DatabaseI
 
     override fun unload(classLoader: ClassLoader) {
         WeLogger.i("WeRedPacketAuto: unload() 被调用，移除数据库监听")
-        WeDatabaseApi.removeListener(this)
+        WeDatabaseListener.removeListener(this)
         currentRedPacketMap.clear()
         WeLogger.i("WeRedPacketAuto: 数据库监听器已移除，红包缓存已清空")
         super.unload(classLoader)  // 必须调用父类方法来重置 isLoad 标志
