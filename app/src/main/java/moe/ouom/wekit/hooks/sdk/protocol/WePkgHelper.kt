@@ -38,7 +38,7 @@ class WePkgHelper : ApiHookItem(), IDexFind {
     private val dexClsNetScenePat by dexClass()
 
     // 网络 //
-    private val dexClsNetSceneBase by dexClass()
+    val dexClsNetSceneBase by dexClass()
     private val dexClsNetQueue by dexClass()
     private val dexClsKernel by dexClass()
     private val dexClsNetDispatcher by dexClass()
