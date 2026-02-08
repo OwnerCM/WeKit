@@ -326,13 +326,20 @@ public class WeLogger {
      */
     @SuppressLint("DefaultLocale")
     public static void printStackTrace(int logLevel, @NonNull String tag, @NonNull String prefix) {
-        StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
-        if (stackTrace.length == 0) {
-            log(logLevel, tag, prefix + " - Empty stack trace");
-            return;
-        }
+        log(logLevel, tag, getStackTraceString());
+    }
 
-        StringBuilder stackTraceMsg = new StringBuilder(prefix).append("\n");
+    @NonNull
+    public static void printStackTraceErr(@NonNull String TAG, @NonNull Throwable th) {
+        e(TAG, android.util.Log.getStackTraceString(th));
+    }
+
+    @SuppressLint("DefaultLocale")
+    @NonNull
+    public static String getStackTraceString() {
+        StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+
+        StringBuilder stackTraceMsg = new StringBuilder().append("\n");
         boolean startRecording = false;
 
         for (StackTraceElement element : stackTrace) {
@@ -360,25 +367,14 @@ public class WeLogger {
                     element.getLineNumber()
             ));
         }
-
-        log(logLevel, tag, stackTraceMsg.toString());
-    }
-
-    @NonNull
-    public static void printStackTraceErr(@NonNull String TAG, @NonNull Throwable th) {
-        e(TAG, android.util.Log.getStackTraceString(th));
-    }
-
-    @NonNull
-    public static String getStackTraceString(@NonNull Throwable th) {
-        return android.util.Log.getStackTraceString(th);
+        return stackTraceMsg.toString();
     }
 
     // ========== 分段打印 ==========
 
     public static void logChunked(int priority, @NonNull String tag, @NonNull String msg) {
         if (msg.length() <= CHUNK_SIZE) {
-            Log.println(priority, tag, msg);
+            Log.println(priority, BuildConfig.TAG,"[" +  tag + "]" + msg);
             return;
         }
 

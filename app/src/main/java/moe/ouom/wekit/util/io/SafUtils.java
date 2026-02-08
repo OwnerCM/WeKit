@@ -231,7 +231,7 @@ public class SafUtils {
 
     @UiThread
     private static void complainAboutNoSafActivity(@NonNull Context context, @NonNull Throwable e) {
-        String msg = WeLogger.getStackTraceString(e);
+        String msg = WeLogger.getStackTraceString();
         new AlertDialog.Builder(context)
                 .setTitle("ActivityNotFoundException")
                 .setMessage("找不到处理 SAF Intent 的 Activity，可能是系统问题。\n" +

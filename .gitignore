@@ -37,4 +37,3 @@ local.properties
 /app/src/main/cpp/include/generated_hidden_dex.h
 /app/nul
 /.idea/deploymentTargetSelector.xml
-/.idea/copilot.data.migration.ask2agent.xml

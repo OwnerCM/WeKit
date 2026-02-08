@@ -8,6 +8,8 @@ import moe.ouom.wekit.core.model.ApiHookItem
 import moe.ouom.wekit.dexkit.intf.IDexFind
 import moe.ouom.wekit.hooks.core.annotation.HookItem
 import moe.ouom.wekit.util.common.SyncUtils
+import moe.ouom.wekit.util.common.Utils.extractXmlAttr
+import moe.ouom.wekit.util.common.Utils.extractXmlTag
 import moe.ouom.wekit.util.log.WeLogger
 import org.luckypray.dexkit.DexKitBridge
 import java.io.FileNotFoundException
@@ -712,6 +714,14 @@ class WeMessageApi : ApiHookItem(), IDexFind {
             WeLogger.e(TAG, "语音发送流程崩溃", e)
             false
         }
+    }
+
+    fun sendXmlAppMsg(toUser: String, xmlContent: String): Boolean {
+        val appId = extractXmlAttr(xmlContent, "appid")
+        val title = extractXmlTag(xmlContent, "title")
+
+        WeLogger.d(TAG, "解析信息: AppId=$appId, Title=$title")
+        return WeAppMsgApi.INSTANCE?.sendXmlAppMsg(toUser, title, appId, null, null, xmlContent) ?: false
     }
 
     /**

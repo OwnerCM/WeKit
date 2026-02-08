@@ -2,6 +2,7 @@ package moe.ouom.wekit.hooks.sdk.api
 
 import android.annotation.SuppressLint
 import android.content.ContentValues
+import android.util.Log
 import de.robv.android.xposed.XposedHelpers
 import moe.ouom.wekit.config.WeConfig
 import moe.ouom.wekit.constants.Constants
@@ -74,7 +75,7 @@ class WeDatabaseListener : ApiHookItem() {
                                 }.joinToString(", ")
                                 val result = param.result
 
-                                WeLogger.logChunkedD("WeDatabaseApi","[Insert] table=$table, result=$result, args=[$argsInfo]")
+                                WeLogger.logChunkedD("WeDatabaseApi","[Insert] table=$table, result=$result, args=[$argsInfo], stack=${WeLogger.getStackTraceString()}")
                             }
                         }
                         listeners.forEach { it.onInsert(table, values) }

@@ -19,7 +19,7 @@ object WePkgManager {
             val data = WeProtoData()
             data.fromBytes(reqBytes)
             WeLogger.logChunkedI("WePkgInterceptor-Request",
-                "Request: $uri, CGI=$cgiId, LEN=${reqBytes.size}, Data=${data.toJSON()}"
+                "Request: $uri, CGI=$cgiId, LEN=${reqBytes.size}, Data=${data.toJSON()}, Stack=${WeLogger.getStackTraceString()}"
             )
         }
 

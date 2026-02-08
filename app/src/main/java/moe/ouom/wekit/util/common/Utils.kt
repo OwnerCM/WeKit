@@ -20,6 +20,7 @@ import java.util.Date
 import java.util.Objects
 import androidx.core.view.size
 import androidx.core.net.toUri
+import java.util.regex.Pattern
 
 object Utils {
     private val sHandler: Handler? = null
@@ -226,5 +227,43 @@ object Utils {
             size < 1024 * 1024 -> "${size / 1024} KB"
             else -> "${size / 1024 / 1024} MB"
         }
+    }
+
+    /**
+     * 从 XML 提取属性值 (e.g. appid="xxx")
+     */
+    fun extractXmlAttr(xml: String, attrName: String): String {
+        try {
+            val pattern = Pattern.compile("$attrName=\"([^\"]*)\"")
+            val matcher = pattern.matcher(xml)
+            if (matcher.find()) {
+                return matcher.group(1) ?: ""
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        return ""
+    }
+
+    /**
+     * 从 XML 提取标签内容 (e.g. <title>xxx</title>)
+     */
+    fun extractXmlTag(xml: String, tagName: String): String {
+        try {
+            val pattern = Pattern.compile("<$tagName><!\\[CDATA\\[(.*?)]]></$tagName>")
+            val matcher = pattern.matcher(xml)
+            if (matcher.find()) {
+                return matcher.group(1) ?: ""
+            }
+            // Fallback for non-CDATA
+            val patternSimple = Pattern.compile("<$tagName>(.*?)</$tagName>")
+            val matcherSimple = patternSimple.matcher(xml)
+            if (matcherSimple.find()) {
+                return matcherSimple.group(1) ?: ""
+            }
+        } catch (_: Exception) {
+            // ignore
+        }
+        return ""
     }
 }

@@ -3,6 +3,7 @@ package moe.ouom.wekit.hooks.sdk.protocol
 import android.annotation.SuppressLint
 import android.content.SharedPreferences
 import moe.ouom.wekit.config.RuntimeConfig
+import moe.ouom.wekit.hooks.sdk.api.WeMessageApi
 import moe.ouom.wekit.host.HostInfo
 import moe.ouom.wekit.util.log.WeLogger
 import java.security.MessageDigest
@@ -46,6 +47,14 @@ object WeApi {
         val suffixHex = String.format("%04x", j16 % 65535)
         val suffixNum = (j16 % 7) + 100
         return str2 + suffixHex + suffixNum
+    }
+
+
+    /**
+     * 获取自己的微信号
+     */
+    fun getSelfAlias(): String {
+        return WeMessageApi.INSTANCE?.getSelfAlias() ?: ""
     }
 
     /**

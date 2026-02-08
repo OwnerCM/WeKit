@@ -72,7 +72,7 @@ class SimplifiedExample : BaseSwitchFunctionHookItem() /* 这里也可以继承 
         WeLogger.w("SimplifiedExample", "xxxxx")
         WeLogger.v("SimplifiedExample", "xxxxx")
         WeLogger.e("SimplifiedExample", 1230000000000L)
-        WeLogger.w("SimplifiedExample", WeLogger.getStackTraceString(Throwable()))
+        WeLogger.w("SimplifiedExample", WeLogger.getStackTraceString())
         WeLogger.printStackTrace() // DEBUG 级别
         WeLogger.printStackTrace(Log.ERROR, "SimplifiedExample", "异常堆栈：")
         WeLogger.printStackTraceErr("SimplifiedExample", Throwable())
