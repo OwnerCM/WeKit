@@ -26,7 +26,7 @@ class ScriptDocViewer : BaseClickableFunctionHookItem() {
 
         try {
             // 跳转到脚本文档网页
-            val url = "https://github.com/cwuom/WeKit/SCRIPT_API_DOCUMENT.md"
+            val url = "https://github.com/cwuom/WeKit/blob/master/SCRIPT_API_DOCUMENT.md"
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
